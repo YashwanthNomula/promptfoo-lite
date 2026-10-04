@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promptfoo-lite"
+version = "1.0.0"
+description = "A tiny LLM prompt-evaluation harness with zero dependencies"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Yashwanth Nomula" }]
+keywords = ["llm", "eval", "prompt-engineering", "testing"]
+
+[project.scripts]
+pfeval = "promptfoo_lite.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["promptfoo_lite*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
