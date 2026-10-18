@@ -30,12 +30,17 @@ class TestCaseResult:
     passed: bool = False
     error: str | None = None
     tokens: int | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cost_usd: float | None = None
 
 
 @dataclass
 class EvalResult:
     results: list[TestCaseResult]
     elapsed_s: float
+    filter_text: str | None = None  # substring filter applied, if any
+    planned_total: int | None = None  # runs the unfiltered plan would have made
 
     @property
     def total(self) -> int:
@@ -69,6 +74,60 @@ class EvalResult:
             groups.setdefault(r.provider.id, []).append(r)
         return groups
 
+    def stats(self) -> dict:
+        """Aggregate latency, token and cost stats across measured cases.
+
+        Only cases that produced a completion are included; template and
+        provider errors are excluded.
+        """
+        measured = [r for r in self.results if r.error is None]
+        latencies = sorted(r.latency_ms for r in measured)
+        n = len(latencies)
+        total_tokens = sum(r.tokens for r in measured if r.tokens is not None)
+        total_cost = sum(r.cost_usd for r in measured if r.cost_usd is not None)
+        per_provider_tokens: dict[str, int] = {}
+        per_provider_cost: dict[str, float] = {}
+        for r in measured:
+            pid = r.provider.id
+            if r.tokens is not None:
+                per_provider_tokens[pid] = per_provider_tokens.get(pid, 0) + r.tokens
+            if r.cost_usd is not None:
+                per_provider_cost[pid] = per_provider_cost.get(pid, 0.0) + r.cost_usd
+        return {
+            "cases_measured": n,
+            "latency_ms": {
+                "mean": _mean(latencies),
+                "p50": _percentile(latencies, 50),
+                "p95": _percentile(latencies, 95),
+                "max": latencies[-1] if latencies else 0.0,
+            },
+            "tokens": {
+                "total": total_tokens,
+                "by_provider": per_provider_tokens,
+            },
+            "cost_usd": {
+                "total": total_cost,
+                "by_provider": {k: round(v, 6) for k, v in per_provider_cost.items()},
+            },
+        }
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Percentile of pre-sorted values (linear interpolation, 0..100)."""
+    n = len(sorted_values)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return sorted_values[0]
+    rank = pct / 100 * (n - 1)
+    lo = int(rank)
+    hi = min(lo + 1, n - 1)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (rank - lo)
+
 
 def _run_one(
     test: TestCase,
@@ -96,7 +155,7 @@ def _run_one(
         )
 
     asserts = [
-        evaluate(completion.text, spec, completion.latency_ms)
+        evaluate(completion.text, spec, completion.latency_ms, completion.cost_usd)
         for spec in test.assert_
     ]
     score = score_asserts(asserts)
@@ -107,11 +166,20 @@ def _run_one(
         rendered_prompt=rendered, output=completion.text,
         latency_ms=completion.latency_ms, asserts=asserts,
         score=score, passed=passed, tokens=completion.tokens,
+        prompt_tokens=completion.prompt_tokens,
+        completion_tokens=completion.completion_tokens,
+        cost_usd=completion.cost_usd,
     )
 
 
-def plan(config: EvalConfig) -> list[tuple[TestCase, Prompt, ProviderSpec]]:
-    """Expand the config into (test, prompt, provider) runs."""
+def plan(config: EvalConfig, filter_text: str | None = None) -> list[tuple[TestCase, Prompt, ProviderSpec]]:
+    """Expand the config into (test, prompt, provider) runs.
+
+    With ``filter_text``, keep only runs whose test description, prompt id /
+    label, or provider id / label contains the substring (case-insensitive).
+    A blank filter means no filtering — so ``--filter ""`` behaves like no
+    filter instead of matching nothing.
+    """
     prompts = {p.id: p for p in config.prompts}
     providers = {p.id: p for p in config.providers}
     runs = []
@@ -127,12 +195,24 @@ def plan(config: EvalConfig) -> list[tuple[TestCase, Prompt, ProviderSpec]]:
         for prompt in test_prompts:
             for provider_spec in test_providers:
                 runs.append((test, prompt, provider_spec))
-    return runs
+    needle = (filter_text or "").strip().lower()
+    if not needle:
+        return runs
+    return [
+        run
+        for run in runs
+        if needle in run[0].description.lower()
+        or needle in run[1].id.lower()
+        or needle in run[1].label.lower()
+        or needle in run[2].id.lower()
+        or needle in run[2].label.lower()
+    ]
 
 
-def run_eval(config: EvalConfig) -> EvalResult:
+def run_eval(config: EvalConfig, filter_text: str | None = None) -> EvalResult:
     """Run every (test, prompt, provider) combination concurrently."""
-    runs = plan(config)
+    full_plan = plan(config)
+    runs = plan(config, filter_text)
     providers = {spec.id: make_provider(spec.id) for spec in config.providers}
     started = time.perf_counter()
     results: list[TestCaseResult] = []
@@ -145,4 +225,9 @@ def run_eval(config: EvalConfig) -> EvalResult:
         # Preserve plan order for deterministic output.
         for future in futures:
             results.append(future.result())
-    return EvalResult(results=results, elapsed_s=time.perf_counter() - started)
+    return EvalResult(
+        results=results,
+        elapsed_s=time.perf_counter() - started,
+        filter_text=(filter_text.strip() if filter_text and filter_text.strip() else None),
+        planned_total=len(full_plan) if filter_text and filter_text.strip() else None,
+    )

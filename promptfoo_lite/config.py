@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
+from promptfoo_lite.budget import BudgetError, parse_budget
+
 
 class ConfigError(ValueError):
     """Raised when an eval config file is invalid."""
@@ -51,6 +53,7 @@ class EvalConfig:
     tests: list[TestCase]
     default_threshold: float = 1.0
     max_concurrency: int = 8
+    budget_usd: float | None = None  # optional token-budget gate (dollars)
 
 
 def _as_prompt(raw: object, index: int) -> Prompt:
@@ -159,10 +162,19 @@ def load_config(path: str) -> EvalConfig:
             if pid not in provider_ids:
                 raise ConfigError(f"test {t.description!r}: unknown provider {pid!r}")
 
+    budget_raw = data.get("budget")
+    budget_usd: float | None = None
+    if budget_raw is not None:
+        try:
+            budget_usd = parse_budget(budget_raw)
+        except BudgetError as exc:
+            raise ConfigError(f"{path}: {exc}")
+
     return EvalConfig(
         prompts=prompts,
         providers=providers,
         tests=tests,
         default_threshold=float(data.get("defaultThreshold", 1.0)),
         max_concurrency=int(data.get("maxConcurrency", 8)),
+        budget_usd=budget_usd,
     )

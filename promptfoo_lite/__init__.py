@@ -1,6 +1,6 @@
 """promptfoo-lite: a tiny LLM prompt-evaluation harness with zero dependencies."""
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 from promptfoo_lite.config import EvalConfig, load_config
 from promptfoo_lite.runner import EvalResult, TestCaseResult, run_eval

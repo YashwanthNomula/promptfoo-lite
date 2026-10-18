@@ -88,3 +88,31 @@ def test_list_shows_plan(tmp_path):
     proc = _run("list", _example_config(tmp_path), cwd=tmp_path)
     assert proc.returncode == 0
     assert "planned runs: 1" in proc.stdout
+
+
+def test_run_filter_subset(tmp_path):
+    path = tmp_path / "eval.json"
+    path.write_text(json.dumps({
+        "prompts": [
+            {"id": "haiku", "raw": "Haiku {{topic}}."},
+            {"id": "pitch", "raw": "Pitch {{topic}}."},
+        ],
+        "providers": ["echo"],
+        "tests": [
+            {"description": "haiku case", "vars": {"topic": "oceans"},
+             "prompt": "haiku", "assert": [{"type": "icontains", "value": "ocean"}]},
+            {"description": "pitch case", "vars": {"topic": "oceans"},
+             "prompt": "pitch", "assert": [{"type": "icontains", "value": "ocean"}]},
+        ],
+    }))
+    proc = _run("run", str(path), "--filter", "haiku", cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "filter 'haiku': 1 of 2 planned runs" in proc.stdout
+    assert "pitch case" not in proc.stdout
+
+
+def test_run_filter_no_match_is_error(tmp_path):
+    proc = _run("run", _example_config(tmp_path), "--filter", "zzz-no-match",
+                cwd=tmp_path)
+    assert proc.returncode == 1
+    assert "matched 0 of 1" in proc.stderr

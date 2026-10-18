@@ -152,6 +152,22 @@ def _check_latency_ms(latency_ms: float, spec: AssertionSpec) -> AssertResult:
     )
 
 
+def _check_cost_usd(cost_usd: float | None, spec: AssertionSpec) -> AssertResult:
+    limit = float(spec.threshold if spec.threshold is not None else 0.01)
+    if cost_usd is None:
+        return AssertResult(
+            passed=False, score=0.0,
+            reason="cost not reported by provider",
+            weight=spec.weight,
+        )
+    ok = cost_usd <= limit
+    return AssertResult(
+        passed=ok, score=1.0 if ok else 0.0,
+        reason=f"${cost_usd:.6f} (limit ${limit:.6f})",
+        weight=spec.weight,
+    )
+
+
 _HANDLERS = {
     "contains": _check_contains,
     "icontains": _check_icontains,
@@ -168,13 +184,20 @@ _HANDLERS = {
 
 
 def supported_types() -> list[str]:
-    return sorted(_HANDLERS) + ["latency"]
+    return sorted(_HANDLERS) + ["latency", "cost"]
 
 
-def evaluate(output: str, spec: AssertionSpec, latency_ms: float = 0.0) -> AssertResult:
+def evaluate(
+    output: str,
+    spec: AssertionSpec,
+    latency_ms: float = 0.0,
+    cost_usd: float | None = None,
+) -> AssertResult:
     """Evaluate a single assertion against a model output."""
     if spec.type == "latency":
         return _check_latency_ms(latency_ms, spec)
+    if spec.type == "cost":
+        return _check_cost_usd(cost_usd, spec)
     handler = _HANDLERS.get(spec.type)
     if handler is None:
         return AssertResult(

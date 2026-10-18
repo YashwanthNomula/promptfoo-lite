@@ -140,3 +140,93 @@ def test_html_report_is_standalone(tmp_path):
     result = run_eval(load_config(_write(tmp_path, _minimal())))
     page = report_mod.to_html(result)
     assert "<html" in page and "passed" in page.lower()
+
+
+# ---- --filter ---------------------------------------------------------------
+
+def _two_case_config():
+    return {
+        "prompts": [
+            {"id": "haiku", "label": "Haiku about a topic", "raw": "Haiku {{topic}}."},
+            {"id": "pitch", "label": "One-sentence pitch", "raw": "Pitch {{topic}}."},
+        ],
+        "providers": ["echo", "stub:base"],
+        "tests": [
+            {
+                "description": "haiku mentions the topic",
+                "vars": {"topic": "oceans"},
+                "prompt": "haiku",
+                "assert": [{"type": "icontains", "value": "ocean"}],
+            },
+            {
+                "description": "pitch is short",
+                "vars": {"topic": "oceans"},
+                "prompt": "pitch",
+                "assert": [{"type": "icontains", "value": "ocean"}],
+            },
+        ],
+    }
+
+
+def test_plan_filter_by_description(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    assert len(plan(cfg)) == 4  # 2 tests x 1 prompt each x 2 providers
+    runs = plan(cfg, "haiku")
+    assert len(runs) == 2
+    assert all(r[0].description.startswith("haiku") for r in runs)
+
+
+def test_plan_filter_by_provider(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    runs = plan(cfg, "stub:base")
+    assert len(runs) == 2
+    assert all(r[2].id == "stub:base" for r in runs)
+
+
+def test_plan_filter_is_case_insensitive_and_matches_label(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    assert len(plan(cfg, "HAIKU")) == 2
+    assert len(plan(cfg, "one-sentence")) == 2  # prompt label, not id
+
+
+def test_plan_filter_blank_means_no_filter(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    assert len(plan(cfg, "   ")) == 4
+
+
+def test_plan_filter_no_match_is_empty(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    assert plan(cfg, "definitely-not-there") == []
+
+
+def test_run_eval_filter_records_filter_and_planned_total(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    result = run_eval(cfg, filter_text="pitch")
+    assert result.total == 2
+    assert result.filter_text == "pitch"
+    assert result.planned_total == 4
+    assert all(r.test.description == "pitch is short" for r in result.results)
+
+
+def test_run_eval_without_filter_has_no_filter_metadata(tmp_path):
+    result = run_eval(load_config(_write(tmp_path, _minimal())))
+    assert result.filter_text is None
+    assert result.planned_total is None
+
+
+def test_terminal_report_shows_filter_line(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    text = report_mod.terminal(run_eval(cfg, filter_text="pitch"))
+    assert "filter 'pitch': 2 of 4 planned runs" in text
+
+
+def test_json_report_includes_filter(tmp_path):
+    cfg = load_config(_write(tmp_path, _two_case_config()))
+    payload = json.loads(report_mod.to_json(run_eval(cfg, filter_text="pitch")))
+    assert payload["summary"]["filter"] == {"text": "pitch", "planned_total": 4}
+    assert payload["summary"]["total"] == 2
+
+
+def test_json_report_without_filter_has_no_filter_key(tmp_path):
+    payload = json.loads(report_mod.to_json(run_eval(load_config(_write(tmp_path, _minimal())))))
+    assert "filter" not in payload["summary"]
