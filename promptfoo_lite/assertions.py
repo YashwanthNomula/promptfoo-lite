@@ -93,6 +93,21 @@ def _check_regex(output: str, spec: AssertionSpec) -> AssertResult:
     )
 
 
+def _check_not_regex(output: str, spec: AssertionSpec) -> AssertResult:
+    try:
+        matched = re.search(str(spec.value or ""), output) is not None
+    except re.error as exc:
+        return AssertResult(
+            passed=False, score=0.0, reason=f"invalid regex: {exc}", weight=spec.weight
+        )
+    return AssertResult(
+        passed=not matched, score=0.0 if matched else 1.0,
+        reason="regex did not match (as required)" if not matched
+        else f"forbidden regex {spec.value!r} matched",
+        weight=spec.weight,
+    )
+
+
 def _check_starts_ends(output: str, spec: AssertionSpec, start: bool) -> AssertResult:
     target = str(spec.value or "")
     ok = output.startswith(target) if start else output.endswith(target)
@@ -175,6 +190,8 @@ _HANDLERS = {
     "not_contains": _check_not_contains,
     "equals": _check_equals,
     "regex": _check_regex,
+    "not-regex": _check_not_regex,
+    "not_regex": _check_not_regex,
     "starts-with": lambda o, s: _check_starts_ends(o, s, True),
     "ends-with": lambda o, s: _check_starts_ends(o, s, False),
     "word-count": _check_word_count,

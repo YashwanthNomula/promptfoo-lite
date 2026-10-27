@@ -107,6 +107,8 @@ $ python -m promptfoo_lite run examples/support_bot_eval.json
 - **tests**: each runs against every prompt × provider unless scoped with
   `"prompt"` / `"provider"`. Every test inherits `defaultTest.assert`.
 - **assertions**: `contains`, `icontains`, `not-contains`, `equals`, `regex`,
+  `not-regex` (fails if the pattern matches — use it to forbid leaked
+  secrets or boilerplate in outputs),
   `starts-with`, `ends-with`, `word-count` (`min`/`max`), `char-count`
   (`min`/`max`), `similarity` (word-overlap vs a reference, `threshold`),
   `latency` (max ms), `cost` (max USD per case). Each takes an optional
